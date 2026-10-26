@@ -1,0 +1,47 @@
+# graft's local graph cache — regenerable, not committed (run `graft build`).
+/graft/
+node_modules/
+dist/
+src-tauri/target/
+src-tauri/gen/
+INVENTAIRE_*/
+Journaux/
+.claude/
+*.log
+_cache_build/
+Livraison/
+
+# Autres sorties de compilation et fichiers de distribution
+/target/
+/build/
+/.release-assets/
+*.exe
+*.msi
+*.msix
+*.dll
+*.pdb
+
+# Secrets et configuration locale
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.pfx
+.codex/
+.hermes/
+
+# Diagnostics et notes propres au poste, jamais publies
+/*_diagnostic-*.md
+/RAPPORT_*.md
+/RESIDUS_A_EXAMINER_*.md
+/BILAN_ET_REPRISE.md
+/PLAN_INTEGRATION_7_PROMPTS.md
+/docs/PLAN_NUIT_*.md
+/docs/BILAN_DEVELOPPEMENT_*.md
+
+# Anciens outils de nettoyage propres au poste (conserves localement)
+/LISEZMOI.md
+/Lancer-Nettoyage.cmd
+/NettoyageDisque.ps1
+/Supprimer-FantomesCACO.ps1

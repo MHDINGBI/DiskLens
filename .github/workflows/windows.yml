@@ -1,0 +1,164 @@
+name: Windows CI et releases
+
+on:
+  push:
+    tags:
+      - 'v*'
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Tests et compilation Windows x64
+    runs-on: windows-latest
+    timeout-minutes: 45
+    env:
+      CARGO_TARGET_DIR: ${{ github.workspace }}/_cache_build
+      RUST_BACKTRACE: '1'
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - name: Recuperer les sources
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - name: Installer Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Verifier les versions et le tag
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $package = Get-Content package.json -Raw | ConvertFrom-Json
+          $tauri = Get-Content src-tauri/tauri.conf.json -Raw | ConvertFrom-Json
+          $cargo = Get-Content src-tauri/Cargo.toml -Raw
+          $match = [regex]::Match($cargo, '(?m)^version\s*=\s*"([^"]+)"')
+          if (-not $match.Success -or $package.version -ne $tauri.version -or $package.version -ne $match.Groups[1].Value) {
+            throw 'Les versions package.json, Cargo.toml et tauri.conf.json doivent etre identiques.'
+          }
+          if ($env:GITHUB_REF_TYPE -eq 'tag' -and $env:GITHUB_REF_NAME -cne "v$($package.version)") {
+            throw 'Le tag doit etre exactement v suivi de la version du projet.'
+          }
+
+      - name: Installer Rust stable
+        run: |
+          rustup toolchain install stable --profile minimal --no-self-update
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          rustup default stable
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Installer les dependances JavaScript verrouillees
+        run: npm ci
+
+      - name: Verifier TypeScript et compiler le frontend
+        run: npm run build
+
+      - name: Executer les tests Rust hermetiques
+        run: cargo test --locked --manifest-path src-tauri/Cargo.toml
+
+      - name: Compiler le portable et l'installateur NSIS
+        run: npm run tauri build -- --bundles nsis
+
+      - name: Tester le portable sans nettoyage
+        shell: python
+        run: |
+          import json
+          import os
+          import pathlib
+          import subprocess
+          import tempfile
+
+          exe = pathlib.Path(os.environ['CARGO_TARGET_DIR']) / 'release' / 'disklens.exe'
+          result = subprocess.run([str(exe), '--help'], capture_output=True, text=True, timeout=60)
+          assert result.returncode == 0 and 'DiskLens' in result.stdout, result.stderr
+          with tempfile.TemporaryDirectory(prefix='disklens-smoke-', dir=os.environ['RUNNER_TEMP']) as directory:
+              sample = pathlib.Path(directory) / 'sample.txt'
+              sample.write_text('DiskLens smoke test', encoding='utf-8')
+              result = subprocess.run([str(exe), '--scan', directory, '--json'], capture_output=True, text=True, timeout=60)
+              assert result.returncode == 0, result.stderr
+              scan = json.loads(result.stdout)
+              assert scan['files'] == 1 and scan['errors'] == 0, scan
+          print('CLI --help et scan du dossier temoin : OK ; aucune suppression.')
+
+      - name: Preparer les fichiers de release et les empreintes
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $output = New-Item -ItemType Directory -Path .release-assets -Force
+          Copy-Item "$env:CARGO_TARGET_DIR/release/disklens.exe" "$output/DiskLens-Windows-x64.exe"
+          $installers = @(Get-ChildItem "$env:CARGO_TARGET_DIR/release/bundle/nsis/*-setup.exe")
+          if ($installers.Count -ne 1) { throw 'Un seul installateur NSIS x64 est attendu.' }
+          Copy-Item $installers[0].FullName $output
+          $files = @(Get-ChildItem $output -File | Sort-Object Name)
+          $lines = @($files | ForEach-Object {
+            $hash = (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+            "$hash  $($_.Name)"
+          })
+          [IO.File]::WriteAllText((Join-Path $output 'SHA256SUMS.txt'), ($lines -join "`n") + "`n", [Text.UTF8Encoding]::new($false))
+
+      - name: Conserver les distributions hors du depot Git
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: disklens-windows-x64
+          path: .release-assets/*
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    name: Publier la release GitHub
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: build
+    runs-on: windows-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - name: Recuperer uniquement les distributions validees
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: disklens-windows-x64
+          path: release-assets
+
+      - name: Verifier les empreintes et publier
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $assets = @(Get-ChildItem release-assets -File | Sort-Object Name)
+          if ($assets.Count -ne 3) { throw 'Deux executables et SHA256SUMS.txt sont attendus.' }
+          foreach ($line in Get-Content release-assets/SHA256SUMS.txt) {
+            if ($line -notmatch '^([0-9a-f]{64})  ([^/\\]+\.exe)$') { throw 'Ligne SHA256 invalide.' }
+            $expected = $Matches[1]
+            $file = Join-Path release-assets $Matches[2]
+            if ((Get-FileHash $file -Algorithm SHA256).Hash.ToLowerInvariant() -ne $expected) {
+              throw "Empreinte invalide : $file"
+            }
+          }
+          $paths = @($assets | ForEach-Object { $_.FullName })
+          $notes = 'Version initiale experimentale, Windows 64 bits. Executables non signes : un avertissement SmartScreen est possible. Sauvegarder ses donnees avant tout nettoyage. Portable : WebView2 requis. SHA256SUMS.txt permet de verifier les telechargements.'
+          $flags = @()
+          if ($env:GITHUB_REF_NAME.Contains('-')) { $flags += '--prerelease' }
+          gh release create $env:GITHUB_REF_NAME @paths --repo $env:GITHUB_REPOSITORY --verify-tag --title "DiskLens $env:GITHUB_REF_NAME" --draft --generate-notes --notes $notes @flags
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $release = gh release view $env:GITHUB_REF_NAME --repo $env:GITHUB_REPOSITORY --json assets | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if ($release.assets.Count -ne 3) { throw 'Upload incomplet : la release reste en brouillon.' }
+          foreach ($asset in $assets) {
+            $remote = @($release.assets | Where-Object { $_.name -ceq $asset.Name -and $_.size -eq $asset.Length })
+            if ($remote.Count -ne 1) { throw "Fichier distant absent ou incomplet : $($asset.Name)" }
+          }
+          gh release edit $env:GITHUB_REF_NAME --repo $env:GITHUB_REPOSITORY --draft=false
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
