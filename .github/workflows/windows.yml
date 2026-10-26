@@ -8,9 +8,18 @@ on:
     branches:
       - main
   workflow_dispatch:
+    inputs:
+      release_tag:
+        description: 'Tag existant a publier ; laisser vide pour verifier sans publier'
+        required: false
+        default: ''
+        type: string
 
 permissions:
   contents: read
+
+env:
+  RELEASE_TAG: ${{ inputs.release_tag || (startsWith(github.ref, 'refs/tags/') && github.ref_name) || '' }}
 
 concurrency:
   group: windows-${{ github.ref }}
@@ -31,6 +40,7 @@ jobs:
       - name: Recuperer les sources
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
+          ref: ${{ inputs.release_tag && format('refs/tags/{0}', inputs.release_tag) || github.ref }}
           persist-credentials: false
 
       - name: Installer Node.js
@@ -49,7 +59,7 @@ jobs:
           if (-not $match.Success -or $package.version -ne $tauri.version -or $package.version -ne $match.Groups[1].Value) {
             throw 'Les versions package.json, Cargo.toml et tauri.conf.json doivent etre identiques.'
           }
-          if ($env:GITHUB_REF_TYPE -eq 'tag' -and $env:GITHUB_REF_NAME -cne "v$($package.version)") {
+          if ($env:RELEASE_TAG -and $env:RELEASE_TAG -cne "v$($package.version)") {
             throw 'Le tag doit etre exactement v suivi de la version du projet.'
           }
 
@@ -113,12 +123,13 @@ jobs:
         with:
           name: disklens-windows-x64
           path: .release-assets/*
+          include-hidden-files: true
           if-no-files-found: error
           retention-days: 7
 
   publish:
     name: Publier la release GitHub
-    if: startsWith(github.ref, 'refs/tags/')
+    if: startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch' && inputs.release_tag != '')
     needs: build
     runs-on: windows-latest
     timeout-minutes: 10
@@ -150,15 +161,15 @@ jobs:
           $paths = @($assets | ForEach-Object { $_.FullName })
           $notes = 'Version initiale experimentale, Windows 64 bits. Executables non signes : un avertissement SmartScreen est possible. Sauvegarder ses donnees avant tout nettoyage. Portable : WebView2 requis. SHA256SUMS.txt permet de verifier les telechargements.'
           $flags = @()
-          if ($env:GITHUB_REF_NAME.Contains('-')) { $flags += '--prerelease' }
-          gh release create $env:GITHUB_REF_NAME @paths --repo $env:GITHUB_REPOSITORY --verify-tag --title "DiskLens $env:GITHUB_REF_NAME" --draft --generate-notes --notes $notes @flags
+          if ($env:RELEASE_TAG.Contains('-')) { $flags += '--prerelease' }
+          gh release create $env:RELEASE_TAG @paths --repo $env:GITHUB_REPOSITORY --verify-tag --title "DiskLens $env:RELEASE_TAG" --draft --generate-notes --notes $notes @flags
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          $release = gh release view $env:GITHUB_REF_NAME --repo $env:GITHUB_REPOSITORY --json assets | ConvertFrom-Json
+          $release = gh release view $env:RELEASE_TAG --repo $env:GITHUB_REPOSITORY --json assets | ConvertFrom-Json
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           if ($release.assets.Count -ne 3) { throw 'Upload incomplet : la release reste en brouillon.' }
           foreach ($asset in $assets) {
             $remote = @($release.assets | Where-Object { $_.name -ceq $asset.Name -and $_.size -eq $asset.Length })
             if ($remote.Count -ne 1) { throw "Fichier distant absent ou incomplet : $($asset.Name)" }
           }
-          gh release edit $env:GITHUB_REF_NAME --repo $env:GITHUB_REPOSITORY --draft=false
+          gh release edit $env:RELEASE_TAG --repo $env:GITHUB_REPOSITORY --draft=false
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

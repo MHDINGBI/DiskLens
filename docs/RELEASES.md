@@ -28,7 +28,9 @@ Les tags de préversion, par exemple `v0.2.0-beta.1`, doivent correspondre à la
 
 ## Vérifier sans publier
 
-Dans **Actions → Windows CI et releases → Run workflow**, choisir `main`. Ce lancement compile et teste, conserve les distributions comme artefact pendant sept jours et **ne publie pas de release**. Les pull requests vers `main` suivent les mêmes vérifications. Seul un tag déclenche la publication.
+Dans **Actions → Windows CI et releases → Run workflow**, choisir `main` et **laisser le champ `release_tag` vide**. Ce lancement compile et teste, conserve les distributions comme artefact pendant sept jours et **ne publie pas de release**. Les pull requests vers `main` suivent les mêmes vérifications.
+
+Pour reprendre une publication après correction du workflow, lancer celui de `main` en renseignant explicitement `release_tag`, par exemple `v0.1.0`. Le workflow récupère alors les sources de ce tag existant, vérifie sa version et publie ses distributions. Cette reprise ne déplace pas le tag et ne réécrit pas l'historique ; un lancement manuel sans ce champ ne publie rien.
 
 ## Séparation sources / builds
 
