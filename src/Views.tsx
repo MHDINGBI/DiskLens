@@ -18,7 +18,7 @@ export function Clean({ selected, toggle, setMany, drivesReady }: Sel & { drives
   };
   useEffect(() => { if (drivesReady) run(); }, [drivesReady]);
 
-  if (!drivesReady) return <div className="empty"><h2>Analyse d'abord un disque</h2><p>Le nettoyage rapide s'appuie sur les résultats du scan (onglet Explorateur).</p></div>;
+  if (!drivesReady) return <div className="empty"><h2>Commencez par analyser un disque</h2><p>Le nettoyage utilise cette analyse pour vous proposer les fichiers à examiner.</p><a className="btn primary" href="#explorer">Choisir un disque à analyser</a></div>;
   if (!list) return <div className="empty">{busy ? <><div className="pulse" /> Recherche…</> : <><p>Recherche impossible : {error || "aucun résultat"}</p><button className="btn" onClick={run}>Réessayer</button></>}</div>;
   const cats = [...new Set(list.map((c) => c.category))];
   const safe = list.filter((c) => c.risk === "safe");
@@ -79,7 +79,7 @@ export function Dups({ selected, toggle, setMany, drivesReady }: Sel & { drivesR
     setBusy(true); setErr(""); setShown(100); setGroups(null);
     try { setGroups(await api.duplicates(minMb)); } catch (e) { setErr(String(e)); } finally { setBusy(false); }
   };
-  if (!drivesReady) return <div className="empty"><h2>Analyse d'abord un disque</h2></div>;
+  if (!drivesReady) return <div className="empty"><h2>Commencez par analyser un disque</h2><p>DiskLens comparera ensuite les fichiers pour repérer les doublons.</p><a className="btn primary" href="#explorer">Choisir un disque à analyser</a></div>;
   const visibleGroups = (groups ?? []).map((g) => {
     const paths = photosOnly ? g.paths.filter((p) => /\.(?:jpe?g|png|webp|heic|heif|avif|tiff?|bmp|dng|cr2|nef|arw)$/i.test(p)) : g.paths;
     return { ...g, paths, wasted: g.size * (paths.length - 1) };

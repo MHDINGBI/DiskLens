@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { serialiserResidus } from "./sessionResidus";
 
 export type Drive = { key: string; mount: string; label: string; total: number; free: number; scanned_at: number | null };
 export type Item = { name: string; path: string; kind: "dir" | "file" | "small"; size: number; files: number; age_days: number | null };
@@ -59,16 +60,27 @@ export const api = {
   sauvegardeOuvrir: (reglage: string) => invoke<void>("sauvegarde_ouvrir", { reglage }),
   onedriveScan: () => invoke<OdRacine[]>("onedrive_scan"),
   onedriveLiberer: (chemins: string[], inclureEpingles: boolean) => invoke<OdResult[]>("onedrive_liberer", { chemins, inclureEpingles }),
-  residusScan: () => invoke<ResidusReport>("residus_scan"),
+  residusScan: () => serialiserResidus(() => invoke<ResidusReport>("residus_scan")),
+  logicielsListe: () => invoke<Logiciel[]>("logiciels_liste"),
   logicielDesinstaller: (id: string, confirme: boolean) => invoke<string>("logiciel_desinstaller", { id, confirme }),
-  logicielResidusApres: (id: string) => invoke<ResidusReport>("logiciel_residus_apres", { id }),
-  residusChercher: (nom: string, editeur: string) => invoke<ResidusReport>("residus_chercher", { nom, editeur }),
-  residusClean: (chemins: string[]) => invoke<QuarResult[]>("residus_clean", { chemins }),
+  logicielResidusApres: (id: string) => serialiserResidus(() => invoke<ResidusReport>("logiciel_residus_apres", { id })),
+  residusChercher: (nom: string, editeur: string) => serialiserResidus(() => invoke<ResidusReport>("residus_chercher", { nom, editeur })),
+  residusClean: (chemins: string[]) => serialiserResidus(() => invoke<QuarResult[]>("residus_clean", { chemins })),
+  residusNettoyerEtScanner: (chemins: string[]) => serialiserResidus(async () => {
+    const resultats = await invoke<QuarResult[]>("residus_clean", { chemins });
+    try { return { resultats, rapport: await invoke<ResidusReport>("residus_scan"), erreur: "" }; }
+    catch (e) { return { resultats, rapport: null, erreur: String(e) }; }
+  }),
   residusLots: () => invoke<Lot[]>("residus_lots"),
   residusPurgeLot: (lot: string) => invoke<void>("residus_purge_lot", { lot }),
-  registreScan: (logiciels: Logiciel[]) => invoke<CleReg[]>("registre_scan", { logiciels }),
+  registreScan: (logiciels: Logiciel[]) => serialiserResidus(() => invoke<CleReg[]>("registre_scan", { logiciels })),
   registrePointRestauration: () => invoke<string>("registre_point_restauration"),
-  registreClean: (cles: string[], confirme: boolean) => invoke<RegResult[]>("registre_clean", { cles, confirme }),
+  registreClean: (cles: string[], confirme: boolean) => serialiserResidus(() => invoke<RegResult[]>("registre_clean", { cles, confirme })),
+  registreNettoyerEtScanner: (cles: string[], logiciels: Logiciel[]) => serialiserResidus(async () => {
+    const resultats = await invoke<RegResult[]>("registre_clean", { cles, confirme: true });
+    try { return { resultats, clesRestantes: await invoke<CleReg[]>("registre_scan", { logiciels }), erreur: "" }; }
+    catch (e) { return { resultats, clesRestantes: null, erreur: String(e) }; }
+  }),
   drives: () => invoke<Drive[]>("list_drives"),
   scan: (root: string) => invoke<ScanSummary>("start_scan", { root }),
   cancelScan: () => invoke<void>("cancel_scan"),

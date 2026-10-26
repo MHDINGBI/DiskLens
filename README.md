@@ -6,7 +6,7 @@ Application Windows locale de diagnostic du stockage, de nettoyage choisi et de 
 
 Télécharger la version Windows 64 bits depuis les **[Releases GitHub](https://github.com/MHDINGBI/DiskLens/releases/latest)** :
 
-- **`DiskLens_0.1.0_x64-setup.exe`** : installateur Windows pour la version initiale ; le nom contient la version de chaque livraison.
+- **`DiskLens_<version>_x64-setup.exe`** : installateur Windows ; le nom contient la version de la livraison.
 - **`DiskLens-Windows-x64.exe`** : exécutable portable, sans installation ; nécessite WebView2.
 - **`SHA256SUMS.txt`** : empreintes de contrôle des deux exécutables.
 
@@ -22,11 +22,15 @@ Le workflow **Windows CI et releases** vérifie les pull requests et les lanceme
 
 ## Fonctions
 
+L'accueil propose les actions courantes et l'espace réellement disponible sur les disques. Le menu regroupe Stockage, Applications, Suivi et Outils. Pour désinstaller, ouvrir directement **Applications → Logiciels** : l'inventaire se charge sans recherche de résidus ni analyse du disque. Les listes de logiciels et de pistes de résidus sont paginées par 30 éléments. Le thème clair ou sombre reste mémorisé.
+
+Dans **Applications → Résidus**, les vues **Fichiers et dossiers**, **Registre (avancé)** et **Quarantaine** séparent les opérations. Après une désinstallation, le bouton **Vérifier et chercher les restes** ouvre directement les résultats ciblés. Les analyses partagent une file d'exécution pour conserver le bon inventaire lorsqu'on change d'écran.
+
 - Explorateur de disque, treemap, filtres, Top 20 et historique de croissance.
 - Caches et anciens installateurs à examiner ; doublons BLAKE3 avec filtre photos. L'âge d'un installateur ne prouve pas que son logiciel est installé.
 - Panier avec vérification des protections, corbeille par défaut et confirmation de suppression. La corbeille libère l'espace seulement après son vidage.
-- Inventaire des logiciels avec recherche par nom/éditeur, dernière trace UserAssist estimée et indices OEM prudents. « Désinstaller et nettoyer… » lance le désinstalleur officiel après confirmation. Une fois ses étapes terminées, « Vérifier et chercher les restes » refuse de poursuivre tant que l'inscription du produit subsiste, puis montre les dossiers à sélectionner pour la quarantaine. Le suivi conserve le nom dans la session ; une absence de trace d'usage ne prouve pas l'absence d'utilisation.
-- Résidus de logiciels et registre, quarantaine avec manifeste. « Analyser » découvre aussi des dossiers sans logiciel associé, sans saisir de nom : nom supposé, chemin, taille logique, indices et mesures partielles. Ces pistes incertaines restent en lecture seule et hors du panier de nettoyage. Recoupement des installations et processus ; exclusion des emplacements système/partagés, jonctions et fichiers cloud ; recherche bornée dans les emplacements usuels. La désinstallation n'est pas prouvée par une absence d'inscription. Les anciens lots sans marqueur valide sont conservés et leur purge est refusée.
+- Inventaire des logiciels avec recherche par nom/éditeur, dernière trace UserAssist estimée et indices OEM prudents. Dans Logiciels, « Désinstaller… » lance le désinstalleur officiel après confirmation. Une fois ses étapes terminées, « Vérifier et chercher les restes » refuse de poursuivre tant que l'inscription du produit subsiste, puis montre les dossiers à sélectionner pour la quarantaine. Le suivi conserve le nom dans la session ; une absence de trace d'usage ne prouve pas l'absence d'utilisation.
+- Résidus de logiciels et registre, quarantaine avec manifeste. « Rechercher les résidus » découvre aussi des dossiers sans logiciel associé, sans saisir de nom : nom supposé, chemin, taille logique, indices et mesures partielles. Ces pistes incertaines restent en lecture seule et hors du panier de nettoyage. Recoupement des installations et processus ; exclusion des emplacements système/partagés, jonctions et fichiers cloud ; recherche bornée dans les emplacements usuels. La désinstallation n'est pas prouvée par une absence d'inscription. Les anciens lots sans marqueur valide sont conservés et leur purge est refusée.
 - Processus CPU/RAM, démarrage réversible, tâches de session et services tiers éligibles. Les services passent en mode manuel sans être arrêtés, et leur mode automatique initial est mémorisé pour réactivation. Les composants système et de sécurité restent protégés.
 - Repérage de connexions IPv4 et d'extensions Chromium à examiner, état Defender/pare-feu/mises à jour/disques et sauvegardes. Ce repérage ne remplace pas l'antivirus ; Firefox et IPv6 restent hors de ce diagnostic.
 - OneDrive : libération locale explicite avec nouvelle mesure après action.
@@ -49,12 +53,17 @@ Le nettoyage des restes demande une sélection explicite et une confirmation. La
 
 Ces commandes ne créent aucune fenêtre et ne nettoient rien. Un échec retourne un code non nul ; une erreur de rapport mensuel est aussi conservée dans `rapport_mensuel_erreur.log` dans le dossier de données indiqué.
 
+## Guide d'utilisation
+
+Consulter [docs/UTILISATION.md](docs/UTILISATION.md) pour télécharger, lancer, nettoyer, utiliser la ligne de commande et générer le rapport mensuel sans développer.
+
 ## Développer et vérifier
 
 Prérequis : Node.js, Rust stable, outils de compilation C++ Windows et WebView2. Dépendances JavaScript : `npm ci`. Développement : `npm run tauri dev`.
 
 ```powershell
 npm run build
+npm run test:ui
 cd src-tauri
 cargo test --offline
 cargo build --release --offline --features tauri/custom-protocol
@@ -63,5 +72,7 @@ cargo build --release --offline --features tauri/custom-protocol
 La feature `tauri/custom-protocol` intègre les fichiers de `dist` au binaire distribué. Le dossier `_cache_build` est le cache de compilation configuré. Après une nouvelle compilation, copier `_cache_build/release/disklens.exe` vers `Livraison/DiskLens.exe` pour actualiser la livraison. Pour produire un installateur, utiliser `npm run tauri build` avec les outils NSIS et l'accès réseau éventuellement nécessaires.
 
 Les tests automatiques courants sont hermétiques. Les tests qui modifient le vrai registre ou parcourent la machine sont marqués `ignore` et ne font pas partie de la validation courante. Ne pas lancer les tests ignorés globalement sur une machine de travail.
+
+`test:ui` vérifie le rendu HTML React, les accès directs, la séparation et la pagination des résidus, l'ordre des analyses et les contrastes calculés. Ces contrôles ne remplacent pas un test visuel dans la fenêtre Windows. Voir [la réorganisation de l'interface](docs/DESIGN_DISKLENS_2026-10-26.md).
 
 Les plans de travail et diagnostics du poste restent locaux et ne font pas partie du dépôt public.

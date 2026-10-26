@@ -1,0 +1,38 @@
+/* Primitives : palette locale, grille et typographie. */
+:root {
+  --slate-25: #f7f9fa; --slate-50: #f1f5f7; --slate-100: #e8eef2;
+  --slate-200: #d9e2e8; --slate-400: #9cabbc; --slate-600: #58697b;
+  --slate-800: #253548; --slate-900: #182434; --slate-950: #111c2a;
+  --teal-50: #e3f3ef; --teal-300: #70d6c6; --teal-400: #2bb6a5; --teal-700: #08776d;
+  --white: #ffffff; --red-700: #b4232a; --red-300: #ffb4ae;
+  --space-1: 4px; --space-2: 8px; --space-3: 12px; --space-4: 16px;
+  --space-5: 20px; --space-6: 24px; --space-8: 32px; --space-10: 40px;
+  --radius-sm: 6px; --radius-md: 10px; --radius-lg: 14px;
+  --font-ui: "Segoe UI Variable", "Segoe UI", system-ui, sans-serif;
+  --font-path: "Cascadia Code", Consolas, monospace;
+  --duration-fast: 140ms;
+  /* Sémantique : mode sombre, également utilisé avant lecture de la préférence. */
+  --bg: var(--slate-950); --panel: var(--slate-900); --panel2: var(--slate-800);
+  --text: #edf3f8; --muted: #a5b4c5; --line: #304154; --hover: #2c3d50;
+  --accent: var(--teal-400); --accent2: var(--teal-300); --on-accent: #082520;
+  --accent-soft: #1d3c3f; --accent-hover: #42c8b7;
+  --danger: var(--red-300); --danger-bg: var(--red-700); --danger-soft: #442d32;
+  --warn: #ffd28f; --warn-soft: #3e3525; --ok: #91ddb0;
+  --raised: #1c2a3b; --bd2: #557089; --scroll: #4c6074; --track: #344457; --shadow: #00000045;
+  --sidebar-width: 244px; --page-width: 1160px;
+  /* Composants : les vues historiques utilisent les mêmes alias sémantiques. */
+  --button-bg: var(--panel); --button-border: var(--line); --button-radius: var(--radius-sm);
+  --card-bg: var(--panel); --card-border: var(--line); --card-radius: var(--radius-md);
+  --input-bg: var(--bg); --focus-ring: var(--accent);
+  font-family: var(--font-ui); font-size: 15px; color: var(--text); color-scheme: dark;
+}
+:root[data-theme=light] {
+  --bg: var(--slate-25); --panel: var(--white); --panel2: var(--slate-50);
+  --text: #1e3042; --muted: var(--slate-600); --line: var(--slate-200); --hover: #eaf0f3;
+  --accent: var(--teal-700); --accent2: var(--teal-700); --on-accent: var(--white);
+  --accent-soft: var(--teal-50); --accent-hover: #065f57;
+  --danger: #a4232b; --danger-bg: var(--red-700); --danger-soft: #fff0ee;
+  --warn: #8d5709; --warn-soft: #fff4db; --ok: #216e46;
+  --raised: var(--white); --bd2: #a4b7c5; --scroll: #b5c3ce; --track: #e3eaef; --shadow: #1e30421a;
+  color-scheme: light;
+}

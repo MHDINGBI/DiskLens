@@ -44,7 +44,7 @@ export function colorFor(it: Item): string {
   if (it.kind === "small") return "hsl(220 10% 28%)";
   let h = 0;
   for (let i = 0; i < it.name.length; i++) h = (h * 31 + it.name.charCodeAt(i)) % 360;
-  return it.kind === "file" ? `hsl(${h} 45% 38%)` : `hsl(${h} 55% 42%)`;
+  return it.kind === "file" ? `hsl(${h} 45% 28%)` : `hsl(${h} 55% 30%)`;
 }
 
 export default function Treemap(p: {

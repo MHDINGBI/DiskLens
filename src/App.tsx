@@ -1,30 +1,45 @@
 import { useCallback, useEffect, useState } from "react";
-import { api, DelResult, Drive, fmt, Pick } from "./api";
+import { api, DelResult, Drive, fmt, Pick, ResidusReport } from "./api";
 import Explorer from "./Explorer";
 import { Assistant, Clean, Dups, Report } from "./Views";
 import Settings from "./Settings";
 import Residus from "./Residus";
 import OneDrive from "./OneDrive";
 import Sante from "./Sante";
+import Accueil from "./Accueil";
+import Logiciels from "./Logiciels";
+import Icon from "./Icon";
+import { lireRoute, Route, routes } from "./navigation";
 
-type Tab = "explorer" | "clean" | "dups" | "ai" | "report" | "residus" | "onedrive" | "sante" | "settings";
-const TABS: [Tab, string, string][] = [
-  ["explorer", "Explorateur", "◎"], ["clean", "Nettoyage rapide", "✦"], ["dups", "Doublons", "⧉"],
-  ["ai", "Assistant IA", "✨"], ["report", "Rapport", "▤"], ["residus", "Résidus logiciels", "🧹"], ["onedrive", "OneDrive", "☁"], ["sante", "Santé du PC", "♥"], ["settings", "Réglages", "⚙"],
-];
+const groupes = ["Stockage", "Applications", "Suivi", "Outils"];
 
 export default function App() {
-  const [tab, setTab] = useState<Tab>("explorer");
+  const [tab, setTab] = useState<Route>(() => lireRoute(typeof window === "undefined" ? "" : window.location.hash));
+  const [visites, setVisites] = useState<Set<Route>>(() => new Set([tab]));
   const [drives, setDrives] = useState<Drive[]>([]);
   const [selected, setSelected] = useState<Map<string, number>>(new Map());
   const [toast, setToast] = useState("");
   const [confirm, setConfirm] = useState(false);
   const [version, setVersion] = useState(0);
+  const [driveError, setDriveError] = useState("");
+  const [drivesLoading, setDrivesLoading] = useState(true);
+  const [rapportResidus, setRapportResidus] = useState<ResidusReport | null>(null);
 
-  const [theme, setTheme] = useState<"dark" | "light">(() => (localStorage.getItem("theme") === "light" ? "light" : "dark"));
-  useEffect(() => { document.documentElement.dataset.theme = theme; localStorage.setItem("theme", theme); }, [theme]);
+  const [theme, setTheme] = useState<"dark" | "light">(() => { try { return localStorage.getItem("theme") === "dark" ? "dark" : "light"; } catch { return "light"; } });
+  useEffect(() => { document.documentElement.dataset.theme = theme; try { localStorage.setItem("theme", theme); } catch { /* Préférence en mémoire. */ } }, [theme]);
+  useEffect(() => {
+    const changer = () => setTab(lireRoute(window.location.hash));
+    window.addEventListener("hashchange", changer);
+    return () => window.removeEventListener("hashchange", changer);
+  }, []);
+  useEffect(() => { setVisites((v) => v.has(tab) ? v : new Set([...v, tab])); }, [tab]);
 
-  const refreshDrives = useCallback(() => api.drives().then(setDrives), []);
+  const refreshDrives = useCallback(async () => {
+    setDrivesLoading(true); setDriveError("");
+    try { setDrives(await api.drives()); }
+    catch (e) { setDriveError(`Lecture des disques impossible : ${String(e)}`); }
+    finally { setDrivesLoading(false); }
+  }, []);
   useEffect(() => { refreshDrives(); }, [refreshDrives]);
   const notify = useCallback((m: string) => { setToast(m); window.setTimeout(() => setToast((t) => (t === m ? "" : t)), 6000); }, []);
 
@@ -36,53 +51,46 @@ export default function App() {
 
   const total = [...selected.values()].reduce((a, b) => a + b, 0);
   const scanned = drives.filter((d) => d.scanned_at);
+  const actif = routes[tab];
+  const affiche = (id: Route) => tab === id || visites.has(id);
 
   return (
     <div className="app">
-      <nav className="nav">
-        <div className="brand"><span className="logo" />DiskLens</div>
-        {TABS.map(([id, label, ico]) => (
-          <button key={id} className={tab === id ? "on" : ""} onClick={() => setTab(id)}><span>{ico}</span>{label}</button>
-        ))}
-        <div className="grow" />
-        <button className="theme" onClick={() => setTheme(theme === "dark" ? "light" : "dark")}><span>{theme === "dark" ? "☀" : "☾"}</span>{theme === "dark" ? "Mode clair" : "Mode sombre"}</button>
-        <div className="drives">
-          {drives.map((d) => {
-            const used = d.total - d.free, pct = (used / d.total) * 100;
-            return (
-              <div key={d.key} className="drive">
-                <div className="between"><b>{d.key}</b><span className="muted small">{fmt(d.free)} libres</span></div>
-                <div className="meter"><i className={pct > 90 ? "hot" : pct > 75 ? "warm" : ""} style={{ width: pct + "%" }} /></div>
-              </div>
-            );
-          })}
-        </div>
+      <a className="skip-link" href="#contenu" onClick={(e) => { e.preventDefault(); document.getElementById("contenu")?.focus(); }}>Aller au contenu</a>
+      <nav className="nav" aria-label="Navigation principale">
+        <a href="#home" className="brand" aria-label="DiskLens, accueil"><span className="brand-mark"><Icon name="disk" size={24} /></span><span>DiskLens<small>Stockage et applications</small></span></a>
+        <a href="#home" className={`nav-link${tab === "home" ? " on" : ""}`} aria-label="Vue d’ensemble" title="Vue d’ensemble" aria-current={tab === "home" ? "page" : undefined}><Icon name="home" /><span>Vue d’ensemble</span></a>
+        <div className="nav-sections">{groupes.map((groupe) => <div className="nav-group" key={groupe}><div className="nav-group-label">{groupe}</div>{(Object.keys(routes) as Route[]).filter((id) => routes[id].group === groupe).map((id) => <a key={id} href={`#${id}`} className={`nav-link${tab === id ? " on" : ""}`} aria-label={routes[id].label} title={routes[id].label} aria-current={tab === id ? "page" : undefined}><Icon name={routes[id].icon} /><span>{routes[id].label}</span></a>)}</div>)}</div>
+        <div className="nav-footer"><button className="nav-link theme" aria-label={theme === "dark" ? "Passer en mode clair" : "Passer en mode sombre"} onClick={() => setTheme(theme === "dark" ? "light" : "dark")}><Icon name={theme === "dark" ? "sun" : "moon"} /><span>{theme === "dark" ? "Passer en mode clair" : "Passer en mode sombre"}</span></button><span className="app-local">Application Windows locale</span></div>
       </nav>
 
-      <main>
-        <div hidden={tab !== "explorer"} className="pane">
+      <main id="contenu" tabIndex={-1}>
+        <header className="workspace-bar"><div><span className="workspace-group">{actif.group}</span><h1>{actif.label}</h1></div><div className="workspace-context"><Icon name={actif.icon} size={18} /><span>DiskLens</span></div></header>
+        {tab === "home" && <div className="pane"><Accueil drives={drives} loading={drivesLoading} error={driveError} refresh={refreshDrives} /></div>}
+        {affiche("explorer") && <div hidden={tab !== "explorer"} className="pane">
           <Explorer drives={drives} refreshDrives={refreshDrives} selected={selected} toggle={toggle} notify={notify} version={version} />
-        </div>
-        {tab === "clean" && <div className="pane"><Clean selected={selected} toggle={toggle} setMany={setMany} drivesReady={scanned.length > 0} /></div>}
-        {tab === "dups" && <div className="pane"><Dups selected={selected} toggle={toggle} setMany={setMany} drivesReady={scanned.length > 0} /></div>}
-        {tab === "ai" && <div className="pane"><Assistant addPicks={addPicks} notify={notify} /></div>}
-        {tab === "report" && <div className="pane"><Report drives={drives.map((d) => d.key)} notify={notify} /></div>}
-        {tab === "residus" && <div className="pane"><Residus notify={notify} /></div>}
-        {tab === "onedrive" && <div className="pane"><OneDrive notify={notify} /></div>}
-        {tab === "sante" && <div className="pane"><Sante notify={notify} /></div>}
-        {tab === "settings" && <div className="pane"><Settings notify={notify} /></div>}
+        </div>}
+        {affiche("clean") && <div hidden={tab !== "clean"} className="pane"><Clean selected={selected} toggle={toggle} setMany={setMany} drivesReady={scanned.length > 0} /></div>}
+        {affiche("dups") && <div hidden={tab !== "dups"} className="pane"><Dups selected={selected} toggle={toggle} setMany={setMany} drivesReady={scanned.length > 0} /></div>}
+        {affiche("ai") && <div hidden={tab !== "ai"} className="pane"><Assistant addPicks={addPicks} notify={notify} /></div>}
+        {affiche("report") && <div hidden={tab !== "report"} className="pane"><Report drives={drives.map((d) => d.key)} notify={notify} /></div>}
+        {affiche("logiciels") && <div hidden={tab !== "logiciels"} className="pane"><Logiciels actif={tab === "logiciels"} notify={notify} onResidus={(r) => { setRapportResidus(r); window.location.hash = "residus"; }} /></div>}
+        {affiche("residus") && <div hidden={tab !== "residus"} className="pane"><Residus notify={notify} rapport={rapportResidus} onRapport={setRapportResidus} /></div>}
+        {affiche("onedrive") && <div hidden={tab !== "onedrive"} className="pane"><OneDrive notify={notify} /></div>}
+        {affiche("sante") && <div hidden={tab !== "sante"} className="pane"><Sante notify={notify} /></div>}
+        {affiche("settings") && <div hidden={tab !== "settings"} className="pane"><Settings notify={notify} /></div>}
       </main>
 
       {selected.size > 0 && (
         <div className="basket">
-          <div><b>{selected.size}</b> élément{selected.size > 1 ? "s" : ""} · <b>{fmt(total)}</b> à libérer</div>
+          <div><b>{selected.size}</b> élément{selected.size > 1 ? "s" : ""} sélectionné{selected.size > 1 ? "s" : ""} · <b>{fmt(total)}</b> à examiner</div>
           <div className="row">
             <button className="btn" onClick={() => setSelected(new Map())}>Vider</button>
             <button className="btn danger" onClick={() => setConfirm(true)}>Supprimer…</button>
           </div>
         </div>
       )}
-      {toast && <div className="toast" onClick={() => setToast("")}>{toast}</div>}
+      {toast && <div className="toast" role="status" aria-live="polite"><span>{toast}</span><button className="icon-button" aria-label="Fermer la notification" onClick={() => setToast("")}><Icon name="close" size={18} /></button></div>}
       {confirm && (
         <DeleteModal items={[...selected.entries()].map(([path, size]) => ({ path, size }))}
           onClose={() => setConfirm(false)}

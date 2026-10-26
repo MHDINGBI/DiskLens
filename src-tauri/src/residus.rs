@@ -862,6 +862,12 @@ fn desinstaller(id: &str) -> Result<String, String> {
 
 // ---------- Commandes ----------
 
+/// Inventaire seul : aucun parcours de résidus nécessaire pour ouvrir le désinstalleur.
+#[tauri::command]
+pub async fn logiciels_liste() -> Result<Vec<Logiciel>, String> {
+    tauri::async_runtime::spawn_blocking(inventaire).await.map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 pub async fn residus_scan(_st: State<'_, crate::AppState>) -> Result<ResidusReport, String> {
     tauri::async_runtime::spawn_blocking(scanner).await.map_err(|e| e.to_string())

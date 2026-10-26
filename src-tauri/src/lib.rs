@@ -813,7 +813,7 @@ pub fn run() {
             delete_paths, protection_check, get_settings, save_settings, set_key, test_provider,
             llama_models, llama_start, llama_stop, ai_explain, ai_chat, report_data, ai_report,
             mensuel_etat, mensuel_generer, mensuel_planifier, mensuel_ouvrir,
-            residus::logiciel_desinstaller, residus::logiciel_residus_apres,
+            residus::logiciels_liste, residus::logiciel_desinstaller, residus::logiciel_residus_apres,
             residus::residus_scan, residus::residus_chercher, residus::residus_clean, residus::residus_lots, residus::residus_purge_lot,
             onedrive::onedrive_scan, onedrive::onedrive_liberer,
             demarrage::demarrage_liste, demarrage::demarrage_appliquer, sante::sante_processus, sante::sante_protection, sante::sante_securite, sauvegarde::sauvegarde_etat, sauvegarde::sauvegarde_ouvrir,

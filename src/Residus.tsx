@@ -1,23 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, fmt, Logiciel, Residu, CleReg, Lot, QuarResult, RegResult, ResidusReport } from "./api";
+import Icon from "./Icon";
 
 type CleRegWithSoftware = CleReg & { logiciel: Logiciel };
-type SuiviDesinstallation = { id: string; nom: string };
-function lireSuivi(): SuiviDesinstallation | null {
-  try {
-    const s = JSON.parse(sessionStorage.getItem("disklens-desinstallation") ?? "null");
-    return s && typeof s.id === "string" && typeof s.nom === "string" ? { id: s.id, nom: s.nom } : null;
-  } catch { return null; }
-}
-type LogicielUsage = Logiciel & {
-  date_installation?: string | null;
-  derniere_utilisation_estimee?: string | null;
-  confiance_usage?: string;
-  indice_usage?: string;
-  origine_oem?: string | null;
-  confiance_oem?: string;
-};
-
 const CONFIANCE_LABEL: Record<"sur" | "probable" | "verifier", string> = {
   sur: "Sûr",
   probable: "Probable",
@@ -30,9 +15,11 @@ const CONFIANCE_CLASS: Record<"sur" | "probable" | "verifier", string> = {
   verifier: "rs-verifier",
 };
 
-export default function Residus({ notify }: { notify: (m: string) => void }) {
+export default function Residus({ notify, rapport, onRapport }: { notify: (m: string) => void; rapport: ResidusReport | null; onRapport: (r: ResidusReport) => void }) {
   // Scan state
-  const [report, setReport] = useState<ResidusReport | null>(null);
+  const report = rapport, setReport = onRapport;
+  const rapportCourant = useRef(report);
+  rapportCourant.current = report;
   const [scanning, setScanning] = useState(false);
   const [scanError, setScanError] = useState("");
 
@@ -66,20 +53,13 @@ export default function Residus({ notify }: { notify: (m: string) => void }) {
 
   const [cherche, setCherche] = useState({ nom: "", editeur: "" });
   const [filtreDecouverte, setFiltreDecouverte] = useState("");
-  const [filtreLogiciels, setFiltreLogiciels] = useState<"tous" | "anciens" | "inconnus">("tous");
-  const [desinstallation, setDesinstallation] = useState<LogicielUsage | null>(null);
-  const [desinstallationBusy, setDesinstallationBusy] = useState(false);
-  const [suivi, setSuivi] = useState<SuiviDesinstallation | null>(lireSuivi);
-  const [suiviVerifie, setSuiviVerifie] = useState(false);
-  const [suiviErreur, setSuiviErreur] = useState("");
-  const [filtreNomLogiciel, setFiltreNomLogiciel] = useState("");
-
+  const [vue, setVue] = useState<"fichiers" | "registre" | "quarantaine">("fichiers");
+  const [pagePistes, setPagePistes] = useState(0);
   useEffect(() => {
-    try {
-      if (suivi) sessionStorage.setItem("disklens-desinstallation", JSON.stringify(suivi));
-      else sessionStorage.removeItem("disklens-desinstallation");
-    } catch { /* Le suivi reste disponible en mémoire si le stockage de session est indisponible. */ }
-  }, [suivi]);
+    if (!rapport) return;
+    setVue("fichiers"); setSelectedFiles(new Set());
+    setRegKeys([]); setSelectedRegKeys(new Set()); setScanError(""); setFiltreDecouverte(""); setPagePistes(0);
+  }, [rapport]);
 
   // --- Scan ---
   const runScan = useCallback(async (manuel = false) => {
@@ -88,18 +68,17 @@ export default function Residus({ notify }: { notify: (m: string) => void }) {
     try {
       const r = manuel ? await api.residusChercher(cherche.nom, cherche.editeur) : await api.residusScan();
       setReport(r);
-      setFiltreDecouverte("");
+      setFiltreDecouverte(""); setPagePistes(0);
       setRegKeys([]);
       setSelectedRegKeys(new Set());
       setSelectedFiles(new Set());
-      loadLots();
     } catch (e) {
       setScanError(String(e));
       notify(String(e));
     } finally {
       setScanning(false);
     }
-  }, [notify, cherche]);
+  }, [notify, cherche, onRapport]);
 
   const loadLots = useCallback(async () => {
     setLotsLoading(true);
@@ -114,8 +93,8 @@ export default function Residus({ notify }: { notify: (m: string) => void }) {
   }, [notify]);
 
   useEffect(() => {
-    loadLots();
-  }, [loadLots]);
+    if (vue === "quarantaine") void loadLots();
+  }, [loadLots, vue]);
 
   // --- Registry scan ---
   const runRegScan = useCallback(async () => {
@@ -125,6 +104,7 @@ export default function Residus({ notify }: { notify: (m: string) => void }) {
     try {
       const fantomes = report.logiciels.filter((l) => l.etat === "fantome");
       const keys = await api.registreScan(fantomes);
+      if (rapportCourant.current !== report) return;
       const withLogiciel: CleRegWithSoftware[] = keys.map((k) => {
         const log = report.logiciels.find((l) => l.id === k.logiciel_id);
         return { ...k, logiciel: log! };
@@ -195,11 +175,11 @@ export default function Residus({ notify }: { notify: (m: string) => void }) {
   const confirmClean = useCallback(async () => {
     setCleaning(true);
     try {
-      const res = await api.residusClean(cleanPaths);
+      const { resultats: res, rapport: nouveau, erreur } = await api.residusNettoyerEtScanner(cleanPaths);
       setCleanResults(res);
       notify(`${res.filter((r) => r.ok).length} élément(s) mis en quarantaine · ${res.filter((r) => !r.ok).length} échec(s)`);
-      const r = await api.residusScan();
-      setReport(r);
+      if (nouveau) setReport(nouveau);
+      if (erreur) setScanError(`Les résultats du déplacement sont conservés, mais l’actualisation a échoué : ${erreur}`);
       setSelectedFiles(new Set());
       await loadLots();
     } catch (e) {
@@ -207,7 +187,7 @@ export default function Residus({ notify }: { notify: (m: string) => void }) {
     } finally {
       setCleaning(false);
     }
-  }, [cleanPaths, notify, loadLots]);
+  }, [cleanPaths, notify, loadLots, onRapport]);
 
   const closeCleanModal = useCallback(() => {
     if (!cleaning) {
@@ -248,17 +228,24 @@ export default function Residus({ notify }: { notify: (m: string) => void }) {
     try {
       // Correction 2 : utiliser les chemins (key.chemin) au lieu des IDs
       const chemins = regKeysToDelete.map((k) => k.chemin);
-      const res = await api.registreClean(chemins, true);
+      const { resultats: res, clesRestantes, erreur } = await api.registreNettoyerEtScanner(chemins, report?.logiciels.filter((l) => l.etat === "fantome") ?? []);
+      if (rapportCourant.current !== report) {
+        setRegModalStep(0); setRegKeysToDelete([]); setRegConfirmUnderstood(false);
+        notify(`${res.filter((r) => r.ok).length} clé(s) supprimée(s) pour la sélection précédente · ${res.filter((r) => !r.ok).length} échec(s)`);
+        return;
+      }
       setRegDeleteResults(res);
       setRegModalStep(3); // Correction 3 : passer à l'étape 3 pour afficher les résultats
       notify(`${res.filter((r) => r.ok).length} clé(s) supprimée(s) · ${res.filter((r) => !r.ok).length} échec(s)`);
-      if (report) await runRegScan();
+      setRegKeys((clesRestantes ?? []).map((k) => ({ ...k, logiciel: report!.logiciels.find((l) => l.id === k.logiciel_id)! })));
+      setSelectedRegKeys(new Set());
+      if (erreur) setRegError(`Le résultat du nettoyage est conservé, mais l’actualisation a échoué : ${erreur}`);
     } catch (e) {
       notify(String(e));
     } finally {
       setRegDeleting(false);
     }
-  }, [regKeysToDelete, report, runRegScan, notify]);
+  }, [regKeysToDelete, report, notify]);
 
   const closeRegModal = useCallback(() => {
     if (!regDeleting) {
@@ -281,52 +268,8 @@ export default function Residus({ notify }: { notify: (m: string) => void }) {
     }
   }, [notify, loadLots]);
 
-  const lancerDesinstallation = useCallback(async () => {
-    if (!desinstallation) return;
-    setDesinstallationBusy(true);
-    try {
-      const message = await api.logicielDesinstaller(desinstallation.id, true);
-      notify(message);
-      setSuivi({ id: desinstallation.id, nom: desinstallation.nom });
-      setSuiviVerifie(false);
-      setSuiviErreur("");
-      setDesinstallation(null);
-    } catch (e) {
-      notify(String(e));
-    } finally {
-      setDesinstallationBusy(false);
-    }
-  }, [desinstallation, notify]);
-
-  const chercherApresDesinstallation = useCallback(async () => {
-    if (!suivi) return;
-    setScanning(true);
-    setSuiviErreur("");
-    try {
-      const r = await api.logicielResidusApres(suivi.id);
-      setReport(r);
-      setSelectedFiles(new Set());
-      setRegKeys([]);
-      setSelectedRegKeys(new Set());
-      setSuiviVerifie(true);
-      setScanError("");
-      notify(`${r.residus.length} dossier(s) restant(s) trouvé(s) pour ${suivi.nom}. Choisissez les éléments à mettre en quarantaine.`);
-    } catch (e) {
-      setSuiviErreur(String(e));
-    } finally {
-      setScanning(false);
-    }
-  }, [suivi, notify]);
-
   // --- Computed ---
   const ghostLogiciels = report?.logiciels.filter((l) => l.etat === "fantome") ?? [];
-  const installes = (report?.logiciels.filter((l) => l.etat === "installe") ?? []) as LogicielUsage[];
-  const limiteSixMois = new Date();
-  limiteSixMois.setMonth(limiteSixMois.getMonth() - 6);
-  const anciens = installes.filter((l) => l.derniere_utilisation_estimee && new Date(`${l.derniere_utilisation_estimee}T00:00:00`) < limiteSixMois);
-  const inconnus = installes.filter((l) => !l.derniere_utilisation_estimee);
-  const installesVisibles = (filtreLogiciels === "anciens" ? anciens : filtreLogiciels === "inconnus" ? inconnus : installes)
-    .filter((l) => `${l.nom} ${l.editeur}`.toLocaleLowerCase().includes(filtreNomLogiciel.toLocaleLowerCase()));
   // Correction 5 : ne garder que les logiciels fantômes qui ont au moins un résidu
   const ghostLogicielsAvecResidus = ghostLogiciels.filter((log) => {
     const residues = report?.residus.filter((r) => r.logiciel_id === log.id) ?? [];
@@ -352,44 +295,31 @@ export default function Residus({ notify }: { notify: (m: string) => void }) {
     regKeysByLogiciel.get(k.logiciel_id)!.push(k);
   });
 
+  const nombrePages = Math.max(1, Math.ceil(pistesVisibles.length / 30));
+  const pageCourante = Math.min(pagePistes, nombrePages - 1);
+  const pistesAffichees = pistesVisibles.slice(pageCourante * 30, (pageCourante + 1) * 30);
+
   // --- Render ---
   return (
     <div className="page rs-page">
-      {/* Hero */}
-      <div className="hero">
-        <div>
-          <div className="big">Résidus logiciels</div>
-          <div className="muted">
-            Recherchez les traces possibles de logiciels désinstallés, même si vous avez oublié leur nom. L'analyse ne supprime rien.
-          </div>
-          {report && (
-            <div className="rs-count">
-              {ghostLogicielsAvecResidus.length} ancienne(s) inscription(s) avec résidus · {fmt(report.residus.reduce((t, r) => t + r.octets, 0))}
-              {report.decouverte && ` · ${pistes.length} dossier(s) supplémentaire(s) à vérifier`}
-            </div>
-          )}
-        </div>
-        <button className="btn primary" disabled={scanning} onClick={() => runScan()}>
-          {scanning ? <><span className="pulse" /> Analyse…</> : "Analyser"}
-        </button>
+      <section className="page-heading"><div><h2>Les traces laissées par vos logiciels</h2><p className="muted">Recherchez les dossiers restants, examinez les résultats, puis choisissez le nettoyage.</p></div>{vue === "fichiers" && <button className="btn primary" disabled={scanning} onClick={() => runScan()}><Icon name="search" size={18} />{scanning ? "Recherche…" : "Rechercher les résidus"}</button>}</section>
+      <div className="view-switcher" aria-label="Vues des résidus">
+        <button aria-pressed={vue === "fichiers"} className={vue === "fichiers" ? "active" : ""} onClick={() => setVue("fichiers")}><Icon name="residue" size={18} />Fichiers et dossiers</button>
+        <button aria-pressed={vue === "registre"} className={vue === "registre" ? "active" : ""} onClick={() => setVue("registre")}><Icon name="registry" size={18} />Registre<span className="small muted">Avancé</span></button>
+        <button aria-pressed={vue === "quarantaine"} className={vue === "quarantaine" ? "active" : ""} onClick={() => setVue("quarantaine")}><Icon name="archive" size={18} />Quarantaine</button>
       </div>
-
-      {suivi && (
-        <section className="card rs-card">
-          <header><h3>Désinstallation et nettoyage — {suivi.nom}</h3></header>
-          <p className="muted" style={{ padding: "0 14px" }}>
-            {suiviVerifie
-              ? "L'inscription de ce logiciel a disparu et ses restes ont été recherchés. Examinez les résultats ci-dessous, cochez les dossiers à retirer, puis confirmez leur mise en quarantaine. Le registre se recherche séparément."
-              : "Terminez les étapes du désinstalleur officiel, puis vérifiez ici. DiskLens contrôle à nouveau les logiciels enregistrés avant de rechercher les restes. Une annulation ou un redémarrage en attente peut bloquer cette étape."}
-          </p>
-          {suiviErreur && <p className="bad" role="alert" style={{ padding: "0 14px" }}>{suiviErreur}</p>}
-          <div className="row" style={{ padding: "10px 14px" }}>
-            <button className="btn primary" disabled={scanning} onClick={chercherApresDesinstallation}>{scanning ? "Vérification…" : "Vérifier et chercher les restes"}</button>
-            <button className="btn" disabled={scanning} onClick={() => { setSuivi(null); setSuiviErreur(""); setSuiviVerifie(false); }}>Fermer le suivi</button>
-          </div>
-          <p className="muted small" style={{ padding: "0 14px" }}>Le suivi reste disponible pendant cette session DiskLens. La quarantaine conserve les données : un déplacement sur le même disque ne libère pas d'espace avant la purge du lot.</p>
-        </section>
-      )}
+      {scanError && <div className="inline-message error" role="alert">{scanError}</div>}
+      <div hidden={vue !== "fichiers"} className="rs-file-view">
+      {report && !report.decouverte && report.logiciels.length === 1 && <div className="inline-message"><Icon name="package" /><div><strong>Restes de {report.logiciels[0].nom}</strong><p>La recherche ciblée est terminée. Examinez les chemins et les tailles avant de cocher les dossiers à mettre en quarantaine.</p><a href="#logiciels">Revenir aux logiciels</a></div></div>}
+      <details className="manual-disclosure"><summary>Je connais le nom d’un ancien logiciel</summary>
+      <form className="card rs-manual" onSubmit={(e) => { e.preventDefault(); void runScan(true); }}>
+        <header><h3>Chercher les restes d'un logiciel déjà désinstallé</h3></header>
+        <div className="row rs-manual-row">
+          <label className="grow">Nom du logiciel<input value={cherche.nom} placeholder="Ex. : Revit 2024" onChange={(e) => setCherche({ ...cherche, nom: e.target.value })} /></label>
+          <label className="grow">Éditeur (facultatif)<input value={cherche.editeur} placeholder="Ex. : Autodesk" onChange={(e) => setCherche({ ...cherche, editeur: e.target.value })} /></label>
+          <button className="btn primary" disabled={scanning || cherche.nom.trim().length < 4}>Chercher</button>
+        </div>
+      </form></details>
 
       {report?.decouverte && (
         <section className="card rs-card">
@@ -400,9 +330,9 @@ export default function Residus({ notify }: { notify: (m: string) => void }) {
             Ces pistes ne sont pas sélectionnées pour le nettoyage.
           </p>
           {pistes.length > 0 && <label className="row" style={{ padding: "0 14px 10px" }}>Filtrer les dossiers
-            <input className="grow" value={filtreDecouverte} onChange={(e) => setFiltreDecouverte(e.target.value)} placeholder="Nom supposé ou chemin…" />
+            <input className="grow" value={filtreDecouverte} onChange={(e) => { setFiltreDecouverte(e.target.value); setPagePistes(0); }} placeholder="Nom supposé ou chemin…" />
           </label>}
-          {pistesVisibles.map((p) => (
+          {pistesAffichees.map((p) => (
             <div className="rowitem rs-rowitem" key={p.chemin}>
               <div className="grow">
                 <strong>{p.nom}</strong>
@@ -415,6 +345,7 @@ export default function Residus({ notify }: { notify: (m: string) => void }) {
             </div>
           ))}
           {pistesVisibles.length === 0 && <div className="empty"><p>{pistes.length ? "Aucun dossier ne correspond à ce filtre." : "Aucun dossier supplémentaire repéré dans les emplacements analysés."}</p></div>}
+          {pistesVisibles.length > 30 && <div className="pagination"><span className="muted small">{pageCourante * 30 + 1}–{Math.min((pageCourante + 1) * 30, pistesVisibles.length)} sur {pistesVisibles.length} dossiers</span><div className="row"><button className="btn" disabled={pageCourante === 0} onClick={() => setPagePistes(pageCourante - 1)}>Précédent</button><span className="small">{pageCourante + 1} / {nombrePages}</span><button className="btn" disabled={pageCourante + 1 >= nombrePages} onClick={() => setPagePistes(pageCourante + 1)}>Suivant</button></div></div>}
           <details style={{ padding: "10px 14px" }}>
             <summary>Couverture et limites de la recherche · {report.decouverte.dossiers_examines} dossier(s) candidat(s) examiné(s)</summary>
             <p className="muted small">Recherche limitée aux dossiers immédiats et aux produits millésimés chez les éditeurs installés. Dossiers système et partagés exclus. Liens, jonctions et fichiers cloud ignorés. Aucun parcours de vos documents ou de OneDrive. Les autres profils et installations personnalisées ne sont pas couverts entièrement.</p>
@@ -423,47 +354,11 @@ export default function Residus({ notify }: { notify: (m: string) => void }) {
         </section>
       )}
 
-      {report && (
-        <section className="card rs-card">
-          <header><h3>Désinstaller un logiciel et rechercher ses restes ({installes.length})</h3></header>
-          <label className="row" style={{ padding: "10px 14px" }}>Rechercher un logiciel installé
-            <input className="grow" value={filtreNomLogiciel} onChange={(e) => setFiltreNomLogiciel(e.target.value)} placeholder="Nom ou éditeur…" />
-          </label>
-          <div className="row" style={{ padding: "10px 14px", flexWrap: "wrap" }}>
-            <button className="btn" aria-pressed={filtreLogiciels === "tous"} onClick={() => setFiltreLogiciels("tous")}>Tous ({installes.length})</button>
-            <button className="btn" aria-pressed={filtreLogiciels === "anciens"} onClick={() => setFiltreLogiciels("anciens")}>Dernière trace &gt; 6 mois ({anciens.length})</button>
-            <button className="btn" aria-pressed={filtreLogiciels === "inconnus"} onClick={() => setFiltreLogiciels("inconnus")}>Usage inconnu ({inconnus.length})</button>
-          </div>
-          <p className="muted small" style={{ padding: "0 14px" }}>La dernière utilisation est une estimation issue de UserAssist pour ce profil. Une absence de trace ne signifie pas que le logiciel n'a jamais servi. La date d'installation n'est pas une date d'usage.</p>
-          {installesVisibles.length === 0 ? <div className="empty"><p>Aucun logiciel dans ce filtre.</p></div> : installesVisibles.map((l) => (
-            <div className="rowitem rs-rowitem" key={l.id}>
-              <div className="grow">
-                <strong>{l.nom}</strong> <span className="muted small">{l.editeur}{l.version ? ` · v${l.version}` : ""}</span>
-                <div className="muted small">Date d'installation déclarée : {l.date_installation ?? "inconnue"} · Dernière trace de lancement : {l.derniere_utilisation_estimee ?? "inconnue"} ({l.confiance_usage ?? "inconnue"})</div>
-                {l.origine_oem && <div className="muted small">Origine constructeur possible : {l.origine_oem} ({l.confiance_oem ?? "inconnue"})</div>}
-                <div className="muted small" title={l.indice_usage}>{l.indice_usage}</div>
-              </div>
-              <button className="btn" disabled={!l.desinstalleur || desinstallationBusy || scanning || suivi !== null} onClick={() => setDesinstallation(l)} title={suivi ? "Fermez le suivi en cours avant de désinstaller un autre logiciel" : l.desinstalleur ? "Ouvrir le désinstalleur officiel, puis rechercher les restes" : "Aucun désinstalleur enregistré"}>Désinstaller et nettoyer…</button>
-            </div>
-          ))}
-        </section>
-      )}
-
-      {/* Recherche manuelle après désinstallation */}
-      <form className="card rs-manual" onSubmit={(e) => { e.preventDefault(); void runScan(true); }}>
-        <header><h3>Chercher les restes d'un logiciel déjà désinstallé</h3></header>
-        <div className="row rs-manual-row">
-          <label className="grow">Nom du logiciel<input value={cherche.nom} placeholder="Ex. : Revit 2024" onChange={(e) => setCherche({ ...cherche, nom: e.target.value })} /></label>
-          <label className="grow">Éditeur (facultatif)<input value={cherche.editeur} placeholder="Ex. : Autodesk" onChange={(e) => setCherche({ ...cherche, editeur: e.target.value })} /></label>
-          <button className="btn primary" disabled={scanning || cherche.nom.trim().length < 4}>Chercher</button>
-        </div>
-      </form>
-
       {/* Liste des logiciels fantômes */}
       {ghostLogicielsAvecResidus.length === 0 ? (
         <div className="empty">
-          <h2>{report ? "Aucun résidu lié à une ancienne inscription" : "Lance d'abord une analyse"}</h2>
-          <p>{report ? "Aucun dossier associé aux inscriptions de désinstallation fantômes n'a été trouvé. Les pistes automatiques éventuelles sont présentées plus haut." : "Le bouton Analyser recherche aussi les dossiers sans logiciel installé associé, sans demander de nom."}</p>
+          <h2>{report ? "Aucun dossier lié à une ancienne inscription" : "Retrouver les traces d’anciens logiciels"}</h2>
+          <p>{report ? "Aucun dossier associé aux inscriptions de désinstallation fantômes n'a été trouvé. Les pistes automatiques éventuelles sont présentées plus haut." : "Cliquez sur Rechercher les résidus. Aucun nom à saisir et aucune suppression automatique."}</p>
         </div>
       ) : (
         <>
@@ -500,8 +395,9 @@ export default function Residus({ notify }: { notify: (m: string) => void }) {
         </>
       )}
 
+      </div>
       {/* Registre */}
-      <section className="card rs-card rs-reg-section">
+      <section hidden={vue !== "registre"} className="card rs-card rs-reg-section">
         <header>
           <h3>Registre</h3>
           <button className="btn" disabled={regScanning || !ghostLogiciels.length} onClick={runRegScan}>
@@ -509,6 +405,8 @@ export default function Residus({ notify }: { notify: (m: string) => void }) {
           </button>
         </header>
 
+        {!report && <div className="inline-message"><span>Recherchez d’abord les résidus pour associer les clés à un logiciel.</span><button className="btn" disabled={scanning} onClick={() => runScan()}>{scanning ? "Recherche…" : "Analyser les résidus"}</button></div>}
+        <p className="muted small section-body">L’analyse est en lecture seule. La suppression des clés reste une action avancée, avec export et confirmation séparés.</p>
         {regError && <div className="rowitem bad">{regError}</div>}
 
         <label className="rowitem rs-reg-toggle" style={{ cursor: "default" }}>
@@ -566,13 +464,13 @@ export default function Residus({ notify }: { notify: (m: string) => void }) {
       </section>
 
       {/* Barre d'action sticky */}
-      <div className="rs-action-bar">
-        {selectedFilesCount > 0 && (
+      <div className="rs-action-bar" hidden={vue === "quarantaine" || (vue === "fichiers" ? selectedFilesCount === 0 : selectedRegCount === 0 || !allowRegDelete)}>
+        {vue === "fichiers" && selectedFilesCount > 0 && (
           <button className="btn primary rs-btn-quarantine" disabled={cleaning} onClick={openCleanModal}>
             Mettre en quarantaine ({selectedFilesCount} dossiers · {fmt(selectedFilesSize)})
           </button>
         )}
-        {allowRegDelete && selectedRegCount > 0 && (
+        {vue === "registre" && allowRegDelete && selectedRegCount > 0 && (
           <button className="btn danger rs-btn-regdelete" disabled={regDeleting} onClick={openRegModal}>
             Supprimer {selectedRegCount} clé{selectedRegCount > 1 ? "s" : ""} du registre
           </button>
@@ -580,8 +478,9 @@ export default function Residus({ notify }: { notify: (m: string) => void }) {
       </div>
 
       {/* Quarantaine - Correction 4 : toujours afficher la section, même sans report */}
-      <section className="card rs-card rs-quarantine-section">
-        <header><h3>Quarantaine</h3></header>
+      <section hidden={vue !== "quarantaine"} className="card rs-card rs-quarantine-section">
+        <header><h3>Lots conservés en quarantaine</h3><button className="btn" disabled={lotsLoading} onClick={loadLots}><Icon name="refresh" size={16} />Actualiser</button></header>
+        <p className="muted section-body">Les lots conservent les fichiers retirés. Une purge est définitive et demande une confirmation. Un déplacement sur le même disque ne libère pas d’espace avant cette purge.</p>
         {lotsLoading ? (
           <div className="rowitem"><span className="pulse" /> Chargement…</div>
         ) : lots.length === 0 ? (
@@ -704,19 +603,6 @@ export default function Residus({ notify }: { notify: (m: string) => void }) {
       )}
 
       {/* Purge Lot Modal */}
-      {desinstallation && (
-        <div className="overlay" onClick={() => !desinstallationBusy && setDesinstallation(null)}>
-          <div className="modal" onClick={(e) => e.stopPropagation()}>
-            <h2>Ouvrir le désinstalleur officiel ?</h2>
-            <p>Windows lancera le désinstalleur enregistré pour <b>{desinstallation.nom}</b>. Suis ses étapes pour confirmer ou annuler la désinstallation. DiskLens vérifiera à nouveau l'entrée avant son lancement.</p>
-            <p>Après la fermeture du désinstalleur, utilisez « Vérifier et chercher les restes ». Les fichiers restants seront présentés avec leur taille ; leur nettoyage demande une sélection et une confirmation séparées.</p>
-            <div className="row between">
-              <button className="btn" disabled={desinstallationBusy} onClick={() => setDesinstallation(null)}>Annuler</button>
-              <button className="btn danger" disabled={desinstallationBusy} onClick={lancerDesinstallation}>{desinstallationBusy ? "Ouverture…" : "Ouvrir le désinstalleur"}</button>
-            </div>
-          </div>
-        </div>
-      )}
       {purgeLot && (
         <div className="overlay" onClick={() => setPurgeLot(null)}>
           <div className="modal" onClick={(e) => e.stopPropagation()}>
